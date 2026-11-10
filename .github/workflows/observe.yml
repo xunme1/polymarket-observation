@@ -1,0 +1,91 @@
+name: Capture and publish observations
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified snapshots to GitHub Pages
+        type: boolean
+        default: false
+      force:
+        description: Recapture today's successful events
+        type: boolean
+        default: false
+  schedule:
+    - cron: '0 0 * * *'
+
+concurrency:
+  group: polymarket-observation
+  cancel-in-progress: false
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'schedule' || vars.DAILY_ENABLED == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: write
+    outputs:
+      publish: ${{ steps.mode.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select run mode
+        id: mode
+        env:
+          PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
+        run: echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+      - name: Install pinned browser
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt
+          .venv/bin/python -m playwright install --with-deps chromium
+      - name: Test generation safeguards
+        run: .venv/bin/python -m unittest discover -s tests -v
+      - name: Capture public event pages
+        env:
+          FORCE: ${{ inputs.force }}
+          SCHEDULED: ${{ github.event_name == 'schedule' }}
+        run: |
+          args=()
+          if [ "$FORCE" = 'true' ]; then args+=(--force); fi
+          if [ "$SCHEDULED" = 'true' ]; then args+=(--attempts 3 --retry-seconds 300); fi
+          .venv/bin/python observe.py "${args[@]}"
+      - name: Save validation preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: observation-preview
+          path: |
+            dist/
+            artifacts/status.json
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Record captured history
+        if: steps.mode.outputs.publish == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add snapshots/
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update daily public event snapshots'
+            git push origin HEAD:main
+          fi
+      - uses: actions/upload-pages-artifact@v4
+        if: steps.mode.outputs.publish == 'true'
+        with:
+          path: dist
+  deploy:
+    needs: capture
+    if: needs.capture.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy static snapshot site
+        id: deployment
+        uses: actions/deploy-pages@v4
