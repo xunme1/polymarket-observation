@@ -45,8 +45,8 @@ GitHub 可能关闭长期不活跃的公开仓库定时任务。日常成功发�
 ## 看板集成与回退
 
 预期地址：`https://xunme1.github.io/polymarket-observation/`，以 Pages 实际部署结果为准。
-在研究看板新增独立入口，以 `sandbox="allow-scripts"` iframe 加载固定地址。
-只对研究看板页面的 CSP 加入 `https://xunme1.github.io`，提供独立打开链接。
+研究看板新增独立入口，经 `/polymarket-observation-embed.html` 专用静态页嵌入；两层 iframe 均为 `sandbox="allow-scripts"`。
+仅专用静态页的 Nginx 精确路由允许该 GitHub Pages 路径，全站 CSP 不变；同时提供独立打开链接。
 原有报告权限保持原样；访客设备需能访问 GitHub Pages。
 
 回退：停用 `DAILY_ENABLED`、移除主站入口，保留截图历史。
