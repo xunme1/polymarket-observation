@@ -9,10 +9,14 @@ import re
 import shutil
 import tempfile
 import time
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+
+from market_data import collect_market
+from presentation import render_event
 
 ROOT = Path(__file__).resolve().parent
 TZ = ZoneInfo("Asia/Shanghai")
@@ -151,22 +155,16 @@ def safe_json(data):
 
 def render(snapshot, dates, latest=False):
     esc = html.escape
-    cards = []
-    for item in snapshot["events"]:
-        if item["status"] == "ok":
-            shots = "".join(f'<button class="shot" type="button" aria-label="放大 {esc(item["title"])} 第 {i+1} 段"><img loading="lazy" width="{p["width"]}" height="{p["height"]}" src="data:image/jpeg;base64,{p["jpeg"]}" alt="{esc(item["original_title"])} · 原站截图第 {i+1} 段"></button>' for i, p in enumerate(item["images"]))
-            stamp = f'<time datetime="{esc(item["captured_at"])}">{esc(item["captured_at"].replace("T", " "))}</time>'
-            body = shots
-        else:
-            stamp = "本次未采集成功"
-            body = f'<div class="empty"><strong>本次截图暂不可用</strong><p>{esc(item["error"])}</p><span>未使用历史截图替代。</span></div>'
-        cards.append(f'<article id="{esc(item["id"])}"><div class="card-head"><span class="topic">{esc(item["topic"])}</span><h2>{esc(item["title"])}</h2><div class="stamp">{stamp} <b class="stale" hidden>已超过 26 小时</b></div></div><div class="images">{body}</div><footer><span>来源</span><span class="source">{esc(item["url"])}</span></footer></article>')
-    count = sum(e["status"] == "ok" for e in snapshot["events"])
+    rendered = [render_event(item) for item in snapshot["events"]]
+    count = sum(bool(e.get("images")) or has_quote(e) for e in snapshot["events"])
+    full = all(complete(e) for e in snapshot["events"]) if snapshot.get("version", 1) >= 2 else count == len(snapshot["events"])
     options = "".join(f'<option value="{d}" {"selected" if d == snapshot["date"] else ""}>{d}</option>' for d in dates)
-    nav = "".join(f'<a href="#{esc(e["id"])}">{esc(e["topic"])}</a>' for e in snapshot["events"])
+    topics = dict.fromkeys(e["topic"] for e in snapshot["events"])
+    nav = "".join(f'<button class="filter" data-filter="{esc(topic)}" aria-pressed="false">{esc(topic)}</button>' for topic in topics)
     template = (ROOT / "template.html").read_text()
-    values = {"DATE": snapshot["date"], "STATUS": "完整更新" if count == len(snapshot["events"]) else "部分更新",
-              "COUNT": str(count), "TOTAL": str(len(snapshot["events"])), "CARDS": "".join(cards),
+    values = {"DATE": snapshot["date"], "STATUS": "完整更新" if full else "部分更新",
+              "COUNT": str(count), "TOTAL": str(len(snapshot["events"])), "CARDS": "".join(pair[0] for pair in rendered),
+              "DETAILS": "".join(pair[1] for pair in rendered),
               "OPTIONS": options, "NAV": nav, "PREFIX": "reports/" if latest else "",
               "BUILT": esc(snapshot["generated_at"].replace("T", " "))}
     for key, value in values.items():
@@ -205,6 +203,22 @@ def build_site(archive, output, pending=None):
         shutil.copytree(site, output)
 
 
+def has_quote(event):
+    quote = event.get("market_data", {})
+    return quote.get("status") == "ok" and bool(quote.get("markets"))
+
+
+def complete(event):
+    return bool(event.get("images")) and has_quote(event)
+
+
+def same_day(value, date):
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(TZ).date().isoformat() == date
+    except (AttributeError, ValueError):
+        return False
+
+
 def run(args):
     from playwright.sync_api import sync_playwright
     items = watchlist()
@@ -220,37 +234,64 @@ def run(args):
     previous_path = archive / f"{date}.json"
     previous = json.loads(previous_path.read_text()) if previous_path.exists() else {}
     cached = {e["id"]: e for e in previous.get("events", [])} if not args.force else {}
-    results = {e["id"]: cached[e["id"]] for e in items if e["id"] in cached and cached[e["id"]].get("status") == "ok" and cached[e["id"]]["url"] == e["url"]}
-    if len(results) == len(items):
+    results = {}
+    for item in items:
+        old = cached.get(item["id"], {})
+        result = dict(item)
+        if old.get("url") == item["url"]:
+            if old.get("images") and same_day(old.get("captured_at"), date):
+                result.update({k: v for k, v in old.items() if k not in ("market_data", "status", "error", "screenshot_error")})
+                result.update(item)
+            if has_quote(old) and same_day(old["market_data"].get("fetched_at"), date):
+                result["market_data"] = old["market_data"]
+        results[item["id"]] = result
+    if all(complete(e) for e in results.values()):
         build_site(archive, output)
         print("SKIP: today's complete snapshot already exists")
         return
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        try:
-            for attempt in range(args.attempts):
-                for item in items:
-                    if results.get(item["id"], {}).get("status") == "ok":
-                        continue
+    # API and screenshots fail/retry independently. Launch Chromium only when needed.
+    with ExitStack() as stack:
+        browser = None
+        for attempt in range(args.attempts):
+            for item in items:
+                result = results[item["id"]]
+                if not has_quote(result):
                     try:
-                        results[item["id"]] = capture(browser, item)
-                        print(f'OK {item["id"]}: {len(results[item["id"]]["images"])} segments', flush=True)
+                        result["market_data"] = collect_market(item)
+                        print(f'API OK {item["id"]}', flush=True)
+                    except Exception as error:
+                        result["market_data"] = {"status": "error", "error": str(error)[:400], "attempted_at": now()}
+                        print(f'API FAIL {item["id"]}: {str(error)[:400]}', flush=True)
+                if not result.get("images"):
+                    try:
+                        if browser is None:
+                            p = stack.enter_context(sync_playwright())
+                            browser = p.chromium.launch(headless=True)
+                            stack.callback(browser.close)
+                        result.update(capture(browser, item))
+                        result.pop("screenshot_error", None)
+                        print(f'SCREENSHOT OK {item["id"]}: {len(result["images"])} segments', flush=True)
                     except Exception as error:
                         detail = str(error).split("Call log:")[0][:400]
-                        results[item["id"]] = dict(item, status="error", error=detail, attempted_at=now())
-                        print(f'FAIL {item["id"]}: {detail}', flush=True)
-                if all(e["status"] == "ok" for e in results.values()):
-                    break
-                if attempt + 1 < args.attempts:
-                    time.sleep(args.retry_seconds)
-        finally:
-            browser.close()
-    status = {"last_attempt": now(), "events": [{k:v for k,v in e.items() if k != "images"} for e in results.values()]}
+                        result["screenshot_error"] = detail
+                        print(f'SCREENSHOT FAIL {item["id"]}: {detail}', flush=True)
+                result["status"] = "ok" if complete(result) else "partial" if result.get("images") or has_quote(result) else "error"
+                result["attempted_at"] = now()
+            if all(complete(e) for e in results.values()):
+                break
+            if attempt + 1 < args.attempts:
+                time.sleep(args.retry_seconds)
+    status = {"last_attempt": now(), "events": [{
+        "id": e["id"], "status": e.get("status", "ok"),
+        "captured_at": e.get("captured_at"), "screenshot_error": e.get("screenshot_error"),
+        "data_fetched_at": e.get("market_data", {}).get("fetched_at"),
+        "data_error": e.get("market_data", {}).get("error"),
+    } for e in results.values()]}
     atomic_json(Path("artifacts/status.json"), status)
-    successful = sum(e["status"] == "ok" for e in results.values())
+    successful = sum(bool(e.get("images")) or has_quote(e) for e in results.values())
     if not successful:
         raise ValueError("All events failed; previous snapshot and deployed site preserved")
-    snapshot = {"version": 1, "date": date, "generated_at": now(), "events": [results[e["id"]] for e in items]}
+    snapshot = {"version": 2, "date": date, "generated_at": now(), "events": [results[e["id"]] for e in items]}
     build_site(archive, output, snapshot)
     print(f"READY {date}: {successful}/{len(items)} events; {output / 'index.html'}", flush=True)
 
