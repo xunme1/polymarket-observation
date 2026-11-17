@@ -1,6 +1,6 @@
 # 预测市场观察 · Polymarket
 
-独立公开的原站截图观察页，供研究看板嵌入。只采集公开事件，不登录、不交易。
+独立公开的预测市场观察页，以概率卡片展示每日快照，并保留原站截图，供研究看板嵌入。只采集公开事件，不登录、不交易。
 页面不请求 Polymarket 或第三方 CDN，所有截图采用 Chromium 原生 JPEG 并内嵌。
 
 ## 本地预览
@@ -24,7 +24,7 @@ python3 -m http.server 8787 --directory dist
 2. 手动运行 `Capture and publish observations`，保持 `publish=false`，先验收 `observation-preview` 产物。
 3. 确认 6 个事件可访问、展开完整且图片清晰后，手动运行并勾选 `publish`。
 4. 成功后在 Settings → Secrets and variables → Actions → Variables 创建 `DAILY_ENABLED=true`。
-5. 每天 UTC 00:00（北京时间 08:00），包含周末。GitHub 调度可能延迟，以截图时间为准。
+5. 每天 UTC 00:00（北京时间 08:00），包含周末。GitHub 调度可能延迟，以数据和截图各自的实际采集时间为准。
 
 不需要 Polymarket API Key、浏览器 Cookie 或服务器密钥。工作流只用 GitHub 自带的短期 `GITHUB_TOKEN` 写本仓库历史及 Pages。
 
