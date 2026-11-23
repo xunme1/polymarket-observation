@@ -82,7 +82,7 @@ def render_event(item):
         content = '<div class="card-empty">本次数据暂不可用<br><small>查看详情了解采集状态</small></div>'
         hint, bottom, updated = '等待更新', '<span>未替换为历史数据</span>', ''
     card = (f'<article class="event-card" data-topic="{topic}" data-title="{title}">'
-            f'<div class="card-head">{cover}<div><span class="topic">{topic}</span><h2><button class="card-open" data-open="{identifier}" aria-haspopup="dialog" aria-label="查看 {title} 完整详情">{title}</button></h2></div></div>'
+            f'<div class="card-head">{cover}<div><span class="topic">{topic}</span><h2><button class="card-open" disabled data-open="{identifier}" aria-haspopup="dialog" aria-label="查看 {title} 完整详情">{title}</button></h2></div></div>'
             f'<div class="card-content">{content}</div><div class="card-status"><span>{hint}</span><span class="state">{state}</span></div>'
             f'<div class="card-footer"><div>{bottom}</div><span class="card-arrow" aria-hidden="true">↗</span></div><div class="card-time">{updated}</div></article>')
     if available:

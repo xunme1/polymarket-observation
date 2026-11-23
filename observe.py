@@ -160,7 +160,7 @@ def render(snapshot, dates, latest=False):
     full = all(complete(e) for e in snapshot["events"]) if snapshot.get("version", 1) >= 2 else count == len(snapshot["events"])
     options = "".join(f'<option value="{d}" {"selected" if d == snapshot["date"] else ""}>{d}</option>' for d in dates)
     topics = dict.fromkeys(e["topic"] for e in snapshot["events"])
-    nav = "".join(f'<button class="filter" data-filter="{esc(topic)}" aria-pressed="false">{esc(topic)}</button>' for topic in topics)
+    nav = "".join(f'<button class="filter" disabled data-filter="{esc(topic)}" aria-pressed="false">{esc(topic)}</button>' for topic in topics)
     template = (ROOT / "template.html").read_text()
     values = {"DATE": snapshot["date"], "STATUS": "完整更新" if full else "部分更新",
               "COUNT": str(count), "TOTAL": str(len(snapshot["events"])), "CARDS": "".join(pair[0] for pair in rendered),
