@@ -36,16 +36,23 @@ def main():
         page.on('request', lambda req: external.append(req.url) if not req.url.startswith((HOST, SITE, 'data:')) else None)
         page.goto(HOST + '/')
         site = page.frame_locator('iframe').frame_locator('iframe')
-        expect(site.locator('.event-card')).to_have_count(6)
+        expect(site.locator('.event-card')).to_have_count(9)
         widths = site.locator('.event-grid').evaluate('e => getComputedStyle(e).gridTemplateColumns.split(" ").length')
         assert widths == 3, widths
         assert site.locator('.event-card .price').count() > 0
         site.locator('.event-icon').first.wait_for()
         page.screenshot(path=str(ARTIFACTS / 'desktop.png'), full_page=True)
         # Topic selection and whole-card click; quotes render inside the opaque frame.
-        site.get_by_role('button', name='原油', exact=True).click()
-        expect(site.locator('.event-card:visible')).to_have_count(1)
-        site.locator('.event-card:visible').click()
+        # Pick an event whose screenshot and quotes were both captured in this edition.
+        key = site.locator('template').evaluate_all(
+            "els => els.find(e => e.content.querySelector('.shot') && e.content.querySelector('.detail-outcomes'))?.id")
+        assert key, 'No event has both screenshots and quotes'
+        button = site.locator('button[data-open="' + key.removeprefix('detail-') + '"]')
+        topic = button.locator('xpath=ancestor::article').get_attribute('data-topic')
+        site.get_by_role('button', name=topic, exact=True).click()
+        expect(site.locator('.event-card:visible').first).to_be_visible()
+        assert all(t == topic for t in site.locator('.event-card:visible').evaluate_all('es=>es.map(e=>e.dataset.topic)'))
+        button.click()
         expect(site.locator('#detail')).to_be_visible()
         expect(site.locator('#detail-content [data-pane="data"]')).to_be_visible()
         expect(site.locator('#detail .detail-outcomes .outcome-row').first).to_be_visible()
@@ -62,7 +69,7 @@ def main():
         expect(site.locator('#detail')).to_be_visible()
         page.keyboard.press('Escape')
         expect(site.locator('#detail')).not_to_be_visible()
-        expect(site.locator('.event-card:visible .card-open')).to_be_focused()
+        expect(button).to_be_focused()
         site.get_by_role('button', name='全部事件', exact=True).click()
         page.set_viewport_size({'width': 390, 'height': 844})
         assert site.locator('.event-grid').evaluate('e => getComputedStyle(e).gridTemplateColumns.split(" ").length') == 1
@@ -77,7 +84,7 @@ def main():
         if len(reports) > 1:
             site.get_by_label('选择观察日期').select_option(reports[-1]['date'])
             expect(site.get_by_label('选择观察日期')).to_have_value(reports[-1]['date'])
-            expect(site.locator('.event-card')).to_have_count(6)
+            expect(site.locator('.event-card')).to_have_count(reports[-1]['events'])
             site.locator('.event-card').first.click()
             expect(site.locator('#detail [data-pane="shots"]')).to_be_visible()
             site.get_by_role('button', name='关闭事件详情').click()

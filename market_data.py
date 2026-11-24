@@ -112,8 +112,12 @@ def collect_market(item):
     slug = item['url'].rstrip('/').split('/')[-1]
     if not re.fullmatch('[a-z0-9-]+', slug):
         raise ValueError('Invalid public event slug')
-    data = json.loads(fetch_bytes(API + '/events/slug/' + slug, 4 * 1024 * 1024))
+    endpoint = API + '/events/slug/' + slug + ('?locale=zh' if 'rank' in item else '')
+    data = json.loads(fetch_bytes(endpoint, 4 * 1024 * 1024))
+    if 'rank' in item and (not isinstance(data, dict) or item['id'] != 'event-' + str(data.get('id'))):
+        raise ValueError('Event identity differs from daily ranking')
     result = normalize_event(data, item, datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(timespec='seconds'))
+    result['source_url'] = endpoint
     icon = data.get('icon') or data.get('image')
     if isinstance(icon, str):
         try:
@@ -130,8 +134,13 @@ def collect_market(item):
     return result
 
 
+def outcome_key(label):
+    text = label.strip().lower()
+    return {'是': 'yes', '否': 'no'}.get(text, text)
+
+
 def outcome(market, label='yes'):
-    return next((x.get('price') for x in market['outcomes'] if x['label'].lower() == label), None)
+    return next((x.get('price') for x in market['outcomes'] if outcome_key(x['label']) == label), None)
 
 
 def percentage(value):

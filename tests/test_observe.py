@@ -29,6 +29,9 @@ def success(key="oil"):
 
 class SnapshotTests(unittest.TestCase):
     def setUp(self):
+        lineup = patch.object(observe, 'choose_lineup', side_effect=lambda *_: (observe.watchlist(), None))
+        lineup.start()
+        self.addCleanup(lineup.stop)
         self.market_patch = patch.object(observe, "collect_market", side_effect=lambda _: quote())
         self.collect = self.market_patch.start()
         self.addCleanup(self.market_patch.stop)

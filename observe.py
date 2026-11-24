@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
+import ranking
 from market_data import collect_market
 from presentation import render_event
 
@@ -167,6 +168,9 @@ def render(snapshot, dates, latest=False):
               "DETAILS": "".join(pair[1] for pair in rendered),
               "OPTIONS": options, "NAV": nav, "PREFIX": "reports/" if latest else "",
               "BUILT": esc(snapshot["generated_at"].replace("T", " "))}
+    selection = snapshot.get("selection")
+    values["INTRO"] = (f'{esc(selection["description"])} · 排名采集于 {esc(selection["selected_at"][11:16])}（北京时间）'
+                       if selection else '从市场定价，观察宏观、商品与地缘事件。')
     for key, value in values.items():
         template = template.replace("@@" + key + "@@", value)
     raw = template.encode()
@@ -190,7 +194,7 @@ def build_site(archive, output, pending=None):
         for date in dates:
             body = render(records[date], dates)
             (site / "reports" / f"{date}.html").write_bytes(body)
-            manifest.append({"date": date, "url": f"reports/{date}.html", "size": len(body), "sha256": hashlib.sha256(body).hexdigest()})
+            manifest.append({"date": date, "events": len(records[date]["events"]), "url": f"reports/{date}.html", "size": len(body), "sha256": hashlib.sha256(body).hexdigest()})
         (site / "index.html").write_bytes(render(records[dates[0]], dates, latest=True))
         atomic_json(site / "manifest.json", {"version": 1, "reports": manifest})
         (site / ".nojekyll").touch()
@@ -219,20 +223,38 @@ def same_day(value, date):
         return False
 
 
-def run(args):
-    from playwright.sync_api import sync_playwright
-    items = watchlist()
+def choose_lineup(args, previous):
     if args.event:
-        if args.archive == "snapshots":
+        if Path(args.archive).resolve() == (ROOT / "snapshots").resolve():
             raise ValueError("Single-event preview requires a separate --archive directory")
-        items = [e for e in items if e["id"] == args.event]
+        items = [item for item in watchlist() if item["id"] == args.event]
         if not items:
             raise ValueError("Unknown event")
+        return items, None
+    selection = previous.get("selection", {})
+    if (not args.force and selection.get("method") == ranking.METHOD
+            and len(selection.get("items", [])) == ranking.COUNT):
+        return selection["items"], selection
+    for attempt in range(args.attempts):
+        try:
+            items = ranking.discover()
+            return items, {"method": ranking.METHOD, "description": ranking.DESCRIPTION,
+                           "selected_at": now(), "items": items}
+        except Exception as error:
+            atomic_json(Path("artifacts/status.json"), {"last_attempt": now(), "ranking_error": str(error)[:400]})
+            if attempt + 1 == args.attempts:
+                raise
+            time.sleep(args.retry_seconds)
+
+
+def run(args):
+    from playwright.sync_api import sync_playwright
     date = datetime.now(TZ).date().isoformat()
     archive, output = Path(args.archive), Path(args.output)
     archive.mkdir(parents=True, exist_ok=True)
     previous_path = archive / f"{date}.json"
     previous = json.loads(previous_path.read_text()) if previous_path.exists() else {}
+    items, selection = choose_lineup(args, previous)
     cached = {e["id"]: e for e in previous.get("events", [])} if not args.force else {}
     results = {}
     for item in items:
@@ -245,7 +267,7 @@ def run(args):
             if has_quote(old) and same_day(old["market_data"].get("fetched_at"), date):
                 result["market_data"] = old["market_data"]
         results[item["id"]] = result
-    if all(complete(e) for e in results.values()):
+    if all(complete(e) for e in results.values()) and selection == previous.get("selection"):
         build_site(archive, output)
         print("SKIP: today's complete snapshot already exists")
         return
@@ -292,6 +314,8 @@ def run(args):
     if not successful:
         raise ValueError("All events failed; previous snapshot and deployed site preserved")
     snapshot = {"version": 2, "date": date, "generated_at": now(), "events": [results[e["id"]] for e in items]}
+    if selection:
+        snapshot.update(version=3, selection=selection)
     build_site(archive, output, snapshot)
     print(f"READY {date}: {successful}/{len(items)} events; {output / 'index.html'}", flush=True)
 

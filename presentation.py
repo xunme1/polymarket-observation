@@ -2,7 +2,7 @@
 import html
 from datetime import datetime
 from decimal import Decimal
-from market_data import leading_markets, money, outcome, percentage
+from market_data import leading_markets, money, outcome, outcome_key, percentage
 
 esc = html.escape
 ICONS = {'fed':'🏛','treasury':'↗','oil':'◈','gold':'Au','blockade':'◉','ceasefire':'◎'}
@@ -29,7 +29,7 @@ def market_state(m):
 
 def price_pair(m, *, compact=False):
     yes, no = outcome(m), outcome(m, 'no')
-    if not any(x['label'].lower() == 'yes' for x in m['outcomes']):
+    if not any(outcome_key(x['label']) == 'yes' for x in m['outcomes']):
         return '<div class="prices">' + ''.join(f'<span class="price neutral">{esc(x["label_zh"])} {esc(percentage(x["price"]))}</span>' for x in m['outcomes']) + '</div>'
     return (f'<div class="prices{ " compact" if compact else ""}">'
             f'<span class="price yes" title="原站 Yes 价格：{esc(str(yes)) if yes is not None else "未提供"}"><small>是</small> <strong>{esc(percentage(yes))}</strong></span>'
@@ -81,8 +81,12 @@ def render_event(item):
     else:
         content = '<div class="card-empty">本次数据暂不可用<br><small>查看详情了解采集状态</small></div>'
         hint, bottom, updated = '等待更新', '<span>未替换为历史数据</span>', ''
+    topic_label = topic
+    if 'rank' in item:
+        topic_label = f'#{int(item["rank"])} · {topic}'
+        bottom = f'<strong>{esc(money(item["ranking_volume_24h"]))}</strong><span>24 小时成交量</span>'
     card = (f'<article class="event-card" data-topic="{topic}" data-title="{title}">'
-            f'<div class="card-head">{cover}<div><span class="topic">{topic}</span><h2><button class="card-open" disabled data-open="{identifier}" aria-haspopup="dialog" aria-label="查看 {title} 完整详情">{title}</button></h2></div></div>'
+            f'<div class="card-head">{cover}<div><span class="topic">{topic_label}</span><h2><button class="card-open" disabled data-open="{identifier}" aria-haspopup="dialog" aria-label="查看 {title} 完整详情">{title}</button></h2></div></div>'
             f'<div class="card-content">{content}</div><div class="card-status"><span>{hint}</span><span class="state">{state}</span></div>'
             f'<div class="card-footer"><div>{bottom}</div><span class="card-arrow" aria-hidden="true">↗</span></div><div class="card-time">{updated}</div></article>')
     if available:

@@ -22,7 +22,7 @@ python3 -m http.server 8787 --directory dist
 
 1. 仓库 Settings → Pages → Source 选择 **GitHub Actions**。
 2. 手动运行 `Capture and publish observations`，保持 `publish=false`，先验收 `observation-preview` 产物。
-3. 确认 6 个事件可访问、展开完整且图片清晰后，手动运行并勾选 `publish`。
+3. 确认当天 9 张热榜卡片的来源、概率和截图后，手动运行并勾选 `publish`。
 4. 成功后在 Settings → Secrets and variables → Actions → Variables 创建 `DAILY_ENABLED=true`。
 5. 每天 UTC 00:00（北京时间 08:00），包含周末。GitHub 调度可能延迟，以数据和截图各自的实际采集时间为准。
 
@@ -30,8 +30,10 @@ python3 -m http.server 8787 --directory dist
 
 ## 数据与失败处理
 
-- `watchlist.json`：按数组顺序维护中文标题、主题和公开原站地址。
-- `snapshots/YYYY-MM-DD.json`：逐事件 API 采集时间、原始结果及 Yes / No 价格、成交量、截图时间、原站标题、JPEG 和图像摘要。事件结束后保留历史，由维护者替换清单。
+- 每天从官方 Gamma `GET /events` 按 `volume24hr` 降序分页，按研究主题标签筛选仍有开放市场的事件并去重，取前 9 个。范围含利率、宏观、能源、金属与商品、企业与金融市场和地缘政治。体育、电竞和流行娱乐排除。没有主题配额，同一主题可以多次入榜。
+- `ranking.py` 维护来源标签和入榜规则；选榜时的名次、24 小时成交量及时间随快照保存。普通重跑保留当天选题，只补失败来源；`--force` 重新选榜。排名接口失败或不足 9 个合格事件时停止发布。
+- `watchlist.json` 只为旧的单事件调试命令保留别名。
+- `snapshots/YYYY-MM-DD.json`：逐事件 API 采集时间、原始结果及 Yes / No 价格、成交量、截图时间、原站标题、JPEG 和图像摘要。回看日期时使用当期存档，原有六事件历史保留。
 - `dist/index.html`：最新报告；`dist/reports/YYYY-MM-DD.html`：历史报告。
 - 部分成功发布部分更新；失败事件留空，不用历史截图冒充当天。全失败不覆盖历史或已部署页面。
 - 定时任务失败后隔 5 分钟重试，单次工作流最多 3 轮，只补失败的数据或截图来源；访问限制或验证页面不绕过。
